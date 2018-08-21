@@ -3,11 +3,13 @@ package com.blaze.andrecorddemo
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.provider.MediaStore
+import android.support.v4.content.FileProvider
 import android.support.v7.app.AppCompatActivity
-import android.widget.Toast
+import com.yanzhenjie.permission.AndPermission
+import com.yanzhenjie.permission.Permission
 import kotlinx.android.synthetic.main.activity_main.*
 import java.io.File
 import java.text.SimpleDateFormat
@@ -20,7 +22,7 @@ class MainActivity : AppCompatActivity() {
 
 
         btn_start_system.setOnClickListener {
-            openSystemCameraRecord()
+            requestPermission(RECORD_SYSTEM_VIDEO)
         }
 
         btn_start_diy.setOnClickListener {
@@ -28,29 +30,45 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    //get permissions
+    private fun requestPermission(type: Int) {
+        AndPermission.with(this)
+                .runtime()
+                .permission(Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_EXTERNAL_STORAGE, Permission.CAMERA, Permission.RECORD_AUDIO)
+                .onGranted{
+                    when (type) {
+                        RECORD_SYSTEM_VIDEO -> openSystemCameraRecord()
+                        else -> {}
+                    }
+                }
+                .onDenied{}
+                .start()
+    }
+
     //record by system
     private fun openSystemCameraRecord() {
-        val fileUri = Uri.fromFile(getOutputMediaFile())
-        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        val file = getOutputMediaFile()
+        var fileUri:Uri?
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            fileUri = file?.let { FileProvider.getUriForFile(this,packageName+".fileprovider", it) }
+        }else{
+            fileUri = Uri.fromFile(file)
+        }
+
+        val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE)
         intent.putExtra(MediaStore.EXTRA_OUTPUT, fileUri)
-        intent.putExtra(MediaStore.EXTRA_DURATION_LIMIT, 10)//限制的录制时长 以秒为单位
-        intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 0.5)//设置拍摄的质量0~1
-        intent.putExtra("camerasensortype", 2); // 调用前置摄像头
+        intent.putExtra(MediaStore.EXTRA_DURATION_LIMIT, 60)//限制的录制时长 以秒为单位
+        intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1)//设置拍摄的质量0~1
+//        intent.putExtra("autofocus", false); // 自动对焦
+//        intent.putExtra("camerasensortype", 2); // 调用前置摄像头  无效果
+//        intent.putExtra("android.intent.extras.CAMERA_FACING_FRONT", 1);
         startActivityForResult(intent, RECORD_SYSTEM_VIDEO)
     }
 
     //create a file to store generate videos
     private fun getOutputMediaFile(): File? {
-        if (!Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
-            Toast.makeText(this, "sdcard error", Toast.LENGTH_LONG).show()
-            return null
-        }
-        val mediaStorageDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), VIDEO_DIR)
-        if (mediaStorageDir.exists().not()) {
-            mediaStorageDir.mkdirs()
-        }
-        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss").format(System.currentTimeMillis())
-        val mediaFile = File(mediaStorageDir.path + File.separator + "VID_" + timeStamp + ".mp4")
+        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmm").format(System.currentTimeMillis())
+        val mediaFile = File(this.filesDir.path + File.separator + "galaxy" ,"VID_"+ timeStamp + ".mp4")
         return mediaFile
     }
 
