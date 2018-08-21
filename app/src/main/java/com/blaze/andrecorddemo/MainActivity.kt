@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.support.v4.content.FileProvider
 import android.support.v7.app.AppCompatActivity
+import com.blaze.andrecorddemo.record.CustomRecordActivity
 import com.yanzhenjie.permission.AndPermission
 import com.yanzhenjie.permission.Permission
 import kotlinx.android.synthetic.main.activity_main.*
@@ -26,7 +27,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btn_start_diy.setOnClickListener {
-
+            requestPermission(RECORD_CUSTOM_VIDEO)
         }
     }
 
@@ -38,11 +39,17 @@ class MainActivity : AppCompatActivity() {
                 .onGranted{
                     when (type) {
                         RECORD_SYSTEM_VIDEO -> openSystemCameraRecord()
+                        RECORD_CUSTOM_VIDEO -> openCustomRecord()
                         else -> {}
                     }
                 }
                 .onDenied{}
                 .start()
+    }
+
+    private fun openCustomRecord() {
+        val intent = Intent(this, CustomRecordActivity::class.java)
+        startActivityForResult(intent, RECORD_CUSTOM_VIDEO)
     }
 
     //record by system
@@ -80,6 +87,7 @@ class MainActivity : AppCompatActivity() {
                 videoView.setVideoURI(this.data)
                 videoView.start()
             }
+            RECORD_CUSTOM_VIDEO ->{ }
             else -> {}
         }
     }
