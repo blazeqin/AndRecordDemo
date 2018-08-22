@@ -87,7 +87,10 @@ class MainActivity : AppCompatActivity() {
                 videoView.setVideoURI(this.data)
                 videoView.start()
             }
-            RECORD_CUSTOM_VIDEO ->{ }
+            RECORD_CUSTOM_VIDEO ->data?.apply{
+                videoView.setVideoPath(this.getStringExtra("path"))
+                videoView.start()
+            }
             else -> {}
         }
     }

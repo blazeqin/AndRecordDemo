@@ -1,23 +1,33 @@
 package com.blaze.andrecorddemo.record
 
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Matrix
 import android.graphics.RectF
+import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
 import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.Handler
+import android.os.HandlerThread
 import android.support.v7.app.AppCompatActivity
 import android.util.Log
 import android.util.Size
 import android.util.SparseIntArray
 import android.view.Surface
 import android.view.SurfaceHolder
+import android.view.TextureView
 import android.widget.Toast
 import com.blaze.andrecorddemo.R
 import kotlinx.android.synthetic.main.activity_custom_record.*
 import java.io.File
 import java.io.IOException
+import java.util.*
 import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 
 class CustomRecordActivity : AppCompatActivity() {
     private val SENSOR_ORIENTATION_DEFAULT_DEGREES = 90
@@ -54,6 +64,7 @@ class CustomRecordActivity : AppCompatActivity() {
     private lateinit var videoSize: Size
     private lateinit var previewRequestBuilder: CaptureRequest.Builder
     private var backgroundHandler: Handler? = null
+    private var backgroundThread:HandlerThread? = null
     private var isRecordingVideo = false
     private var videoLocalPath:String? = null
     /**
@@ -79,6 +90,23 @@ class CustomRecordActivity : AppCompatActivity() {
             cameraOpenCloseLock.release()
             cameraDevice?.close()
             this@CustomRecordActivity.cameraDevice = null
+        }
+
+    }
+
+    private val surfaceTextureListener = object :TextureView.SurfaceTextureListener{
+        override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture?, width: Int, height: Int) {
+            configureTransform(width,height)
+        }
+
+        override fun onSurfaceTextureUpdated(texture: SurfaceTexture?) {
+
+        }
+
+        override fun onSurfaceTextureDestroyed(texture: SurfaceTexture?): Boolean = true
+
+        override fun onSurfaceTextureAvailable(texture: SurfaceTexture?, width: Int, height: Int) {
+            openCamera(width, height)
         }
 
     }
@@ -125,11 +153,12 @@ class CustomRecordActivity : AppCompatActivity() {
             cameraDevice?.createCaptureSession(listOf(previewSurface),
                     object :CameraCaptureSession.StateCallback(){
                         override fun onConfigureFailed(session: CameraCaptureSession?) {
-                            captureSession = session
+                            Toast.makeText(this@CustomRecordActivity,"failed", Toast.LENGTH_LONG).show()
                         }
 
                         override fun onConfigured(session: CameraCaptureSession?) {
-                            Toast.makeText(this@CustomRecordActivity,"failed", Toast.LENGTH_LONG).show()
+                            captureSession = session
+                            updatePreview()
                         }
 
                     },backgroundHandler)
@@ -190,6 +219,11 @@ class CustomRecordActivity : AppCompatActivity() {
                         override fun onConfigured(session: CameraCaptureSession?) {
                             captureSession = session
                             updatePreview()
+                            runOnUiThread {
+                                record_control.setImageResource(R.mipmap.recordvideo_stop)
+                                isRecordingVideo = true
+                                mMediaRecorder?.start()
+                            }
                         }
 
                     },backgroundHandler)
@@ -205,6 +239,8 @@ class CustomRecordActivity : AppCompatActivity() {
 
         try {
             setUpCaptureRequestBuilder(previewRequestBuilder)
+            HandlerThread("CameraPreview").start()
+            captureSession?.setRepeatingRequest(previewRequestBuilder.build(),null,backgroundHandler)
         } catch (e: CameraAccessException) {
             e.printStackTrace()
         }
@@ -250,8 +286,114 @@ class CustomRecordActivity : AppCompatActivity() {
     }
 
     private fun stopRecordingVideo() {
+        isRecordingVideo = false
+        record_control.setImageResource(R.mipmap.recordvideo_start)
+        mMediaRecorder?.apply {
+            stop()
+            reset()
+        }
 
+//        videoLocalPath = null
+//        startPreview()
+        val data = Intent()
+        data.putExtra("path", videoLocalPath!!)
+        setResult(Activity.RESULT_OK, data)
+        finish()
     }
 
+    override fun onResume() {
+        super.onResume()
+        startBackgroundThread()
+        if (record_textureView.isAvailable) openCamera(record_textureView.width, record_textureView.height)
+        else record_textureView.surfaceTextureListener = surfaceTextureListener
+    }
 
+    override fun onPause() {
+        closeCamera()
+        stopBackgroundThread()
+        super.onPause()
+    }
+
+    private fun closeCamera() {
+        try {
+            cameraOpenCloseLock.acquire()
+            closePreviewSession()
+            cameraDevice?.close()
+            cameraDevice = null
+            mMediaRecorder?.release()
+            mMediaRecorder = null
+        } catch (ext: InterruptedException) {
+            throw RuntimeException("interrupted while trying to lock camera closing.", ext)
+        }finally {
+            cameraOpenCloseLock.release()
+        }
+    }
+
+    private fun stopBackgroundThread() {
+        backgroundThread?.quitSafely()
+        try {
+            backgroundThread?.join()//把指定的线程加入到当前线程
+            backgroundThread = null
+            backgroundHandler = null
+        } catch (exp: InterruptedException) {
+            exp.printStackTrace()
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun openCamera(width: Int, height: Int) {
+        val manager = this.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        try {
+            if (cameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS).not()) {
+                throw RuntimeException("time out waiting to lock camera opening.")
+            }
+            val cameraId = manager.cameraIdList[0]
+            val characteristics = manager.getCameraCharacteristics(cameraId)
+            val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                    ?: throw RuntimeException("Cannot get available preview/video sizes")
+            sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)
+            videoSize = chooseVideoSize(map.getOutputSizes(MediaRecorder::class.java))
+            previewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture::class.java), width, height, videoSize)
+
+            if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                record_textureView.setAspectRatio(previewSize.width, previewSize.height)
+            }else{
+                record_textureView.setAspectRatio(previewSize.height, previewSize.width)
+            }
+            configureTransform(width, height)
+            mMediaRecorder = MediaRecorder()
+            manager.openCamera(cameraId, stateCallback, null)
+
+        } catch (e: CameraAccessException) {
+            e.printStackTrace()
+        } catch (e: NullPointerException) {
+            e.printStackTrace()
+        } catch (e: InterruptedException) {
+            throw RuntimeException("Interrupted while trying to lock camera opening.")
+        }
+    }
+
+    private fun chooseOptimalSize(outputSizes: Array<Size>, width: Int, height: Int, aspectRatio: Size): Size {
+        val w = aspectRatio.width
+        val h = aspectRatio.height
+        val bigEnough = outputSizes.filter {
+            it.height == it.width * h/w && it.width >= width && it.height >= height
+        }
+        return if (bigEnough.isNotEmpty()) {
+            Collections.min(bigEnough, CompareSizesByArea())
+        }else outputSizes[0]
+    }
+
+    /**
+     * width: height =4:3, width <= 1080
+     */
+    private fun chooseVideoSize(outputSizes: Array<Size>): Size = outputSizes.firstOrNull {
+        it.width == it.height * 4 / 3 && it.width <= 1080
+    } ?: outputSizes[outputSizes.size - 1]
+
+    private fun startBackgroundThread() {
+        backgroundThread = HandlerThread("CameraBackground")
+        backgroundThread?.start()
+        backgroundHandler = Handler(backgroundThread?.looper)
+    }
 }

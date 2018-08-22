@@ -6,7 +6,7 @@
     android:layout_height="match_parent"
     tools:context=".record.CustomRecordActivity">
 
-    <TextureView
+    <com.blaze.andrecorddemo.record.AutoFitTextureView
         android:id="@+id/record_textureView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
